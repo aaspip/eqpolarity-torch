@@ -15,7 +15,12 @@ def focal_gridsearch_chunked(sr_azimuth,takeoff,p_pol,sp_amp,dir_cos_dict,nextra
     """
     if rng is None: rng=np.random.default_rng(123)
     p_pol=np.asarray(p_pol,float); sp_amp=np.asarray(sp_amp,float)
-    ntrial=sr_azimuth.shape[1]; ncoor=int(ncoor)
+    # Azimuth and takeoff trial counts need not be identical.  In SKHASH
+    # workflows without horizontal hypocentral perturbation, azimuth may have
+    # one column while takeoff contains nmc columns from depth/velocity-model
+    # perturbations.  NumPy broadcasts those arrays in _xyz(), so use the
+    # broadcast trial count rather than sr_azimuth.shape[1] alone.
+    ntrial=max(sr_azimuth.shape[1], takeoff.shape[1]); ncoor=int(ncoor)
     # Keep the largest temporary (nobs,ntrial,chunk) arrays bounded.
     nobs_work=max(1,int(max(np.count_nonzero(p_pol),np.isfinite(sp_amp).sum())))
     adaptive=max(64,int(12_000_000/max(1,nobs_work*ntrial)))
