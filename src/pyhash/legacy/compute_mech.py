@@ -107,12 +107,27 @@ def compute_mech(event_x,num_events,event_id,event_pol_df,p_dict,lookup_dict,qua
 		dip_all=dip_all[:nf]
 		rake_all=rake_all[:nf]
 	else: # Python version
-		
-		if np.isfinite(sp_amp).any():
+		# The original NumPy grid search materializes arrays with roughly
+		# (n_observations, n_mc_trials, n_candidate_mechanisms) entries.
+		# Composite events such as the Maacama example can therefore require
+		# tens of GB and be killed by the OS.  Route large problems through
+		# the memory-bounded chunked implementation even when no S/P ratios
+		# are present.  Small polarity-only cases keep the legacy path because
+		# it is faster and preserves the historical execution order exactly.
+		n_trial=max(sr_azimuth.shape[1],takeoff.shape[1])
+		n_obs=max(1,np.count_nonzero(p_pol))
+		est_grid_entries=int(n_obs)*int(n_trial)*int(dir_cos_dict['ncoor'])
+		use_chunked=np.isfinite(sp_amp).any() or est_grid_entries>50_000_000
+
+		if use_chunked:
 			from ..fast_grid import focal_gridsearch_chunked
-			faultnorms_all,faultslips_all=focal_gridsearch_chunked(sr_azimuth,takeoff,p_pol,sp_amp,dir_cos_dict,nextra,ntotal,qextra,qtotal,p_dict['maxout'],dir_cos_dict['ncoor'],rng=fun.rng)
+			faultnorms_all,faultslips_all=focal_gridsearch_chunked(
+				sr_azimuth,takeoff,p_pol,sp_amp,dir_cos_dict,nextra,ntotal,
+				qextra,qtotal,p_dict['maxout'],dir_cos_dict['ncoor'],rng=fun.rng)
 		else:
-			faultnorms_all,faultslips_all=fun.focal_gridsearch(sr_azimuth,takeoff,p_pol,sp_amp,dir_cos_dict,nextra,ntotal,qextra,qtotal,p_dict['maxout'],dir_cos_dict['ncoor'])
+			faultnorms_all,faultslips_all=fun.focal_gridsearch(
+				sr_azimuth,takeoff,p_pol,sp_amp,dir_cos_dict,nextra,ntotal,
+				qextra,qtotal,p_dict['maxout'],dir_cos_dict['ncoor'])
 
 		# Calculates strike,dip,rake from normal,slip vectors for output
 		if ((len(p_dict['outfile2'])>0) | (p_dict['plot_acceptable_solutions'])):
