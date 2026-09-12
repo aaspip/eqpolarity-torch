@@ -149,3 +149,25 @@ The following figures show an example of plotting waveforms and polarity labels 
 
 <img src='https://github.com/chenyk1990/gallery/blob/main/eqpolarity/test_plot_waveforms_and_polarity.png' alt='Slicing' width=480/>
 
+-----------
+## PyHASH focal-mechanism module
+
+`eqpolarity-torch` now also includes **PyHASH**, an installable focal-mechanism module derived from the SKHASH/HASH workflow. The purpose is to connect EQPolarity first-motion predictions directly to focal-mechanism inversion while retaining reproducibility with the published SKHASH examples.
+
+After installing `eqpolarity-torch`, both modules are available:
+
+```python
+from eqpolarity_torch import load_model, predict
+from pyhash import HashConfig, ObservationSet, solve
+```
+
+A SKHASH-compatible command-line interface is installed as well:
+
+```bash
+pyhash run examples/pyhash/skhash_reference/hash1/control_file.txt \
+    --cwd examples/pyhash/skhash_reference
+```
+
+PyHASH adds a bounded-memory grid search, adaptive chunking for large composite mechanisms, cached direction grids, an optional Torch backend for polarity-only inversion, typed configuration, and direct Python APIs. The original HASH/SKHASH example inputs are included under `examples/pyhash/skhash_reference/`, with reproduction and benchmark scripts under `examples/pyhash/`.
+
+See [`PYHASH_REPORT.md`](PYHASH_REPORT.md) for architecture, validation results, installation, and benchmark details.

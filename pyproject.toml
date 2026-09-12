@@ -13,13 +13,18 @@ authors = [{name = "EQPolarity-Torch contributors"}]
 dependencies = [
   "torch>=2.0",
   "numpy>=1.23",
+  "pandas>=1.5",
   "h5py>=3.8",
   "matplotlib>=3.7",
 ]
 
+[project.scripts]
+pyhash = "pyhash.cli:main"
+
 [project.optional-dependencies]
 benchmark = ["tensorflow>=2.11,<2.16", "scikit-learn>=1.2"]
 seismic = ["scipy>=1.10", "obspy>=1.4"]
+pyhash = ["scipy>=1.10", "pandas>=1.5", "matplotlib>=3.7"]
 dev = ["pytest>=7"]
 
 [tool.setuptools]
