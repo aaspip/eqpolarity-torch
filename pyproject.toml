@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eqpolarity-torch"
+version = "0.1.0"
+description = "Faithful PyTorch port of EQPolarity CCT first-motion polarity classifier"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "EQPolarity-Torch contributors"}]
+dependencies = [
+  "torch>=2.0",
+  "numpy>=1.23",
+  "h5py>=3.8",
+  "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+benchmark = ["tensorflow>=2.11,<2.16", "scikit-learn>=1.2"]
+seismic = ["scipy>=1.10", "obspy>=1.4"]
+dev = ["pytest>=7"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
