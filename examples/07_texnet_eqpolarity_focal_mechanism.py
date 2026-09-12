@@ -40,11 +40,11 @@ pip install -e .
 
 Example
 -------
-python examples/pyhash/07_texnet_eqpolarity_focal_mechanism.py
+python examples/07_texnet_eqpolarity_focal_mechanism.py
 
 or explicitly:
 
-python examples/pyhash/07_texnet_eqpolarity_focal_mechanism.py \
+python examples/07_texnet_eqpolarity_focal_mechanism.py \
   --qml /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-EVENTS/texnet2020galz.qml \
   --mseed /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-WAVEFORMS/texnet2020galz.mseed \
   --stations /Users/chenyk/chenyk.data2/various/cyksmall/texnet_stations_2024_0209_extra.csv \
@@ -52,6 +52,14 @@ python examples/pyhash/07_texnet_eqpolarity_focal_mechanism.py \
   --model texas
   --show
 
+python examples/07_texnet_eqpolarity_focal_mechanism.py \
+  --qml /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-EVENTS/texnet2020galz.qml \
+  --mseed /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-WAVEFORMS/texnet2020galz.mseed \
+  --stations /Users/chenyk/chenyk.data2/various/cyksmall/texnet_stations_2024_0209_extra.csv \
+  --output-dir texnet2020galz_focal_mechanism \
+  --model scsn
+  --show
+  
 Notes on geometry
 -----------------
 Geometry is resolved adaptively:
