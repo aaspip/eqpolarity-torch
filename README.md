@@ -34,20 +34,8 @@ BibTeX:
 -----------
 
 ## Install
-First set up the environment and install the dependency packages (tested on CPU machine)
 
-	conda create -n eqp python=3.11.7
-	conda activate eqp
-	conda install ipython notebook
-	pip install torch numpy scipy h5py matplotlib==3.8.0 scikit-learn==1.2.2 seaborn==0.13.2
-
-Or, on a machine with a GPU setup, first create and activate the environment
-
-	conda create -n eqp python=3.11.7
-	conda activate eqp
-	conda install ipython notebook
-
-Then install the appropriate CUDA-enabled PyTorch build for your system from the official PyTorch installation instructions, followed by the remaining dependencies
+Install the appropriate CUDA-enabled PyTorch build for your system from the official PyTorch installation instructions, followed by the remaining dependencies
 
 	pip install numpy scipy h5py matplotlib==3.8.0 scikit-learn==1.2.2 seaborn==0.13.2
 
