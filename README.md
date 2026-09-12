@@ -55,7 +55,7 @@ No TensorFlow installation is required for normal EQpolarity-torch model loading
 -----------
 ## Examples
 # Texas Data Example
-https://github.com/chenyk1990/eqpolarity/tree/main/data/TexasData
+https://github.com/aaspip/eqpolarity-torch/tree/main/data/TexasData
 
 -----------
 ## Development
