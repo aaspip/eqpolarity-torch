@@ -49,7 +49,7 @@ python examples/07_texnet_eqpolarity_focal_mechanism.py \
   --mseed /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-WAVEFORMS/texnet2020galz.mseed \
   --stations /Users/chenyk/chenyk.data2/various/cyksmall/texnet_stations_2024_0209_extra.csv \
   --output-dir texnet2020galz_focal_mechanism \
-  --model texas
+  --model texas \
   --show
 
 python examples/07_texnet_eqpolarity_focal_mechanism.py \
@@ -57,9 +57,19 @@ python examples/07_texnet_eqpolarity_focal_mechanism.py \
   --mseed /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-WAVEFORMS/texnet2020galz.mseed \
   --stations /Users/chenyk/chenyk.data2/various/cyksmall/texnet_stations_2024_0209_extra.csv \
   --output-dir texnet2020galz_focal_mechanism \
-  --model scsn
+  --model scsn \
+  --show
+
+or simply
+python examples/07_texnet_eqpolarity_focal_mechanism.py  \
+  --model texas \
+  --show
+
+python examples/07_texnet_eqpolarity_focal_mechanism.py  \
+  --model scsn \
   --show
   
+
 Notes on geometry
 -----------------
 Geometry is resolved adaptively:
