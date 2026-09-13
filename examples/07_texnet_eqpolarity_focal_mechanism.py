@@ -4,7 +4,7 @@ End-to-end TexNet focal-mechanism workflow using EQPolarity-Torch + PyHASH.
 
 Workflow
 --------
-1. Read one QuakeML event and its P arrivals.
+1. Read one QuakeML event and its complete event-level P/S pick set.
 2. Read the corresponding miniSEED waveform file.
 3. Match each P pick to a vertical-component trace.
 4. Cut a 600-sample window centered on the P arrival.
@@ -38,12 +38,37 @@ Requirements
 pip install obspy pandas numpy matplotlib torch h5py
 pip install -e .
 
+
 Example
 -------
 python examples/07_texnet_eqpolarity_focal_mechanism.py
 
 or explicitly:
+python examples/07_texnet_eqpolarity_focal_mechanism.py \
+  --qml data/pyhash/texnet2021ynzp.qml \
+  --mseed data/pyhash/texnet2021ynzp.mseed \
+  --stations data/pyhash/texnet_stations_2024_0209_extra.csv \
+  --output-dir texnet2021ynzp_focal_mechanism \
+  --exclude-zero-weight-arrivals \
+  --model texas \
+  --show #this is an level-B result
 
+python examples/07_texnet_eqpolarity_focal_mechanism.py \
+  --qml data/pyhash/texnet2021ynzp.qml \
+  --mseed data/pyhash/texnet2021ynzp.mseed \
+  --stations data/pyhash/texnet_stations_2024_0209_extra.csv \
+  --output-dir texnet2021ynzp_focal_mechanism \
+  --model texas \
+  --show #this is an level-A result
+
+python examples/07_texnet_eqpolarity_focal_mechanism.py \
+  --qml data/pyhash/texnet2021ynzp.qml \
+  --mseed data/pyhash/texnet2021ynzp.mseed \
+  --stations data/pyhash/texnet_stations_2024_0209_extra.csv \
+  --output-dir texnet2021ynzp_focal_mechanism \
+  --model scsn \
+  --show #this is an level-B result (indicating a poor polarity picker will make the result worse)
+  
 python examples/07_texnet_eqpolarity_focal_mechanism.py \
   --qml /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-EVENTS/texnet2020galz.qml \
   --mseed /Users/chenyk/DATALIB/TexNet-refined-database-catalog-PSpicks-WAVEFORMS/texnet2020galz.mseed \
@@ -68,8 +93,11 @@ python examples/07_texnet_eqpolarity_focal_mechanism.py  \
 python examples/07_texnet_eqpolarity_focal_mechanism.py  \
   --model scsn \
   --show
-  
 
+python examples/07_texnet_eqpolarity_focal_mechanism.py  \
+  --exclude-zero-weight-arrivals \
+  --show
+  
 Notes on geometry
 -----------------
 Geometry is resolved adaptively:
@@ -138,8 +166,8 @@ PB1Dvel = """
 42.0000 8.0000 4.5710  3.1400 913.0 406.0
 """.strip()
 
-eid='texnet2020galz'
-eid='texnet2021ynzp'
+# eid='texnet2020galz'
+# eid='texnet2021ynzp'
 eid='texnet2022wmmd'
 
 DEFAULT_QML = Path(
@@ -233,59 +261,212 @@ def get_preferred_magnitude(event):
     return mag
 
 
-def extract_p_observations(event, origin, use_zero_weight=False):
+def _arrival_lookup_for_pick(event, preferred_origin):
+    """Return pick-id -> best P-arrival metadata, preferred origin first."""
+    lookup = {}
+    origins = [preferred_origin] + [
+        o for o in event.origins if o is not preferred_origin
+    ]
+    for rank, org in enumerate(origins):
+        for arr in getattr(org, "arrivals", []) or []:
+            pid = str(arr.pick_id)
+            phase = (arr.phase or "").strip().upper()
+            if not phase.startswith("P") or pid in lookup:
+                continue
+            lookup[pid] = {
+                "origin_rank": rank,
+                "azimuth": as_float(arr.azimuth),
+                "takeoff": as_float(arr.takeoff_angle),
+                "distance_deg": as_float(arr.distance),
+                "time_weight": as_float(arr.time_weight),
+                "phase": phase,
+            }
+    return lookup
+
+
+def _is_p_pick(pick, arrival_info=None):
+    phase_hint = str(getattr(pick, "phase_hint", "") or "").strip().upper()
+    if phase_hint:
+        return phase_hint.startswith("P")
+    if arrival_info is not None:
+        return str(arrival_info.get("phase", "")).upper().startswith("P")
+    return False
+
+
+def extract_p_observations(
+    event,
+    origin,
+    use_zero_weight=True,
+    include_all_event_picks=True,
+):
     """
-    Link preferred-origin P arrivals back to QuakeML picks.
+    Extract P observations.
 
-    Only arrivals in the selected origin are used. By default, arrivals whose
-    origin time_weight is exactly zero are excluded because those phases were
-    not used in the preferred-location solution.
+    Two deliberately separate modes are supported:
+
+    COMPLETE mode (default)
+        Start from all event-level P picks with waveform identifiers. This is
+        the recommended mode for focal-mechanism work.
+
+    V7-COMPATIBILITY mode (include_all_event_picks=False)
+        Execute the original v7 preferred-origin-arrival loop literally.
+        Therefore:
+          * only arrivals belonging to the selected origin are considered;
+          * with use_zero_weight=False, time_weight==0 arrivals are removed;
+          * no additional NSLC deduplication or event-level pick recovery is
+            performed.
+
+    Keeping the two branches separate is important: compatibility mode should
+    reproduce v7 exactly rather than approximately.
     """
-    pick_map = {str(p.resource_id): p for p in event.picks}
-    out = []
+    # ------------------------------------------------------------------
+    # Exact v7 selection path.
+    # ------------------------------------------------------------------
+    if not include_all_event_picks:
+        pick_map = {str(p.resource_id): p for p in event.picks}
+        out = []
 
-    for arr in origin.arrivals:
-        phase = (arr.phase or "").strip().upper()
-        if not phase.startswith("P"):
+        for arr in origin.arrivals:
+            phase = (arr.phase or "").strip().upper()
+            if not phase.startswith("P"):
+                continue
+
+            weight = as_float(arr.time_weight)
+            if (
+                (not use_zero_weight)
+                and np.isfinite(weight)
+                and weight == 0.0
+            ):
+                continue
+
+            p = pick_map.get(str(arr.pick_id))
+            if p is None:
+                continue
+
+            wid = p.waveform_id
+            net = (wid.network_code or "").strip()
+            sta = (wid.station_code or "").strip()
+            loc = normalize_loc(wid.location_code)
+            cha = (wid.channel_code or "").strip()
+
+            if not sta:
+                continue
+
+            out.append(
+                PObservation(
+                    pick_id=str(p.resource_id),
+                    network=net,
+                    station=sta,
+                    location=loc,
+                    channel=cha,
+                    pick_time=p.time,
+                    qml_azimuth=as_float(arr.azimuth),
+                    qml_takeoff=as_float(arr.takeoff_angle),
+                    qml_distance_deg=as_float(arr.distance),
+                    qml_time_weight=weight,
+                    manual_polarity=str(p.polarity or ""),
+                )
+            )
+
+        if not out:
+            raise ValueError(
+                "No usable P arrivals were found in the selected origin."
+            )
+        return out
+
+    # ------------------------------------------------------------------
+    # Complete event-level selection path.
+    # ------------------------------------------------------------------
+    arrival_lookup = _arrival_lookup_for_pick(event, origin)
+    candidates = []
+
+    for p in event.picks:
+        pid = str(p.resource_id)
+        arr = arrival_lookup.get(pid)
+
+        if not _is_p_pick(p, arr):
             continue
 
-        weight = as_float(arr.time_weight)
-        if (not use_zero_weight) and np.isfinite(weight) and weight == 0.0:
+        if (
+            not use_zero_weight
+            and arr is not None
+            and np.isfinite(arr["time_weight"])
+            and arr["time_weight"] == 0.0
+        ):
             continue
 
-        p = pick_map.get(str(arr.pick_id))
-        if p is None:
+        wid = getattr(p, "waveform_id", None)
+        if wid is None:
             continue
 
-        wid = p.waveform_id
         net = (wid.network_code or "").strip()
         sta = (wid.station_code or "").strip()
         loc = normalize_loc(wid.location_code)
         cha = (wid.channel_code or "").strip()
-
         if not sta:
             continue
 
-        out.append(
-            PObservation(
-                pick_id=str(p.resource_id),
-                network=net,
-                station=sta,
-                location=loc,
-                channel=cha,
-                pick_time=p.time,
-                qml_azimuth=as_float(arr.azimuth),
-                qml_takeoff=as_float(arr.takeoff_angle),
-                qml_distance_deg=as_float(arr.distance),
-                qml_time_weight=weight,
-                manual_polarity=str(p.polarity or ""),
-            )
+        if arr is None:
+            az = takeoff = dist = weight = np.nan
+            origin_rank = 999
+        else:
+            az = arr["azimuth"]
+            takeoff = arr["takeoff"]
+            dist = arr["distance_deg"]
+            weight = arr["time_weight"]
+            origin_rank = arr["origin_rank"]
+
+        candidates.append(
+            {
+                "obs": PObservation(
+                    pick_id=pid,
+                    network=net,
+                    station=sta,
+                    location=loc,
+                    channel=cha,
+                    pick_time=p.time,
+                    qml_azimuth=az,
+                    qml_takeoff=takeoff,
+                    qml_distance_deg=dist,
+                    qml_time_weight=weight,
+                    manual_polarity=str(p.polarity or ""),
+                ),
+                "origin_rank": origin_rank,
+            }
         )
 
-    if not out:
-        raise ValueError("No usable P arrivals were found in the selected origin.")
+    if not candidates:
+        raise ValueError(
+            "No event-level P picks with waveform identifiers were found."
+        )
 
+    # Deduplicate exact NSLC only in COMPLETE mode.
+    groups = {}
+    for c in candidates:
+        o = c["obs"]
+        key = (o.network, o.station, o.location, o.channel)
+        groups.setdefault(key, []).append(c)
+
+    out = []
+    for group in groups.values():
+        group.sort(
+            key=lambda c: (
+                c["origin_rank"],
+                c["obs"].pick_time,
+            )
+        )
+        out.append(group[0]["obs"])
+
+    out.sort(
+        key=lambda o: (
+            o.network,
+            o.station,
+            o.location,
+            o.channel,
+        )
+    )
     return out
+
 
 
 def load_station_metadata(path):
@@ -899,49 +1080,142 @@ def resolve_takeoff_angle(origin, obs, station_row, distance_km):
 
 
 
-def build_s_pick_lookup(event, origin, use_zero_weight=False):
+def build_s_pick_lookup(
+    event,
+    origin,
+    use_zero_weight=True,
+    include_all_event_picks=True,
+):
     """
-    Build a station-keyed list of S picks belonging to the selected origin.
+    Build station-keyed S picks.
+
+    When include_all_event_picks=False this follows the v7 implementation
+    literally, so a v7-compatibility run also reproduces the same S/P inputs.
     """
-    pick_map = {str(p.resource_id): p for p in event.picks}
+    # ------------------------------------------------------------------
+    # Exact v7 S-pick path.
+    # ------------------------------------------------------------------
+    if not include_all_event_picks:
+        pick_map = {str(p.resource_id): p for p in event.picks}
+        out = {}
+
+        for arr in origin.arrivals:
+            phase = (arr.phase or "").strip().upper()
+            if not phase.startswith("S"):
+                continue
+
+            weight = as_float(arr.time_weight)
+            if (
+                (not use_zero_weight)
+                and np.isfinite(weight)
+                and weight == 0.0
+            ):
+                continue
+
+            pick = pick_map.get(str(arr.pick_id))
+            if pick is None or pick.waveform_id is None:
+                continue
+
+            wid = pick.waveform_id
+            net = (wid.network_code or "").strip()
+            sta = (wid.station_code or "").strip()
+            loc = normalize_loc(wid.location_code)
+            cha = (wid.channel_code or "").strip()
+
+            if not sta:
+                continue
+
+            key = (net, sta)
+            out.setdefault(key, []).append(
+                {
+                    "time": pick.time,
+                    "location": loc,
+                    "channel": cha,
+                    "phase": phase,
+                    "weight": weight,
+                    "pick_id": str(pick.resource_id),
+                }
+            )
+
+        for key in out:
+            out[key].sort(key=lambda x: x["time"])
+        return out
+
+    # ------------------------------------------------------------------
+    # Complete event-level S-pick path.
+    # ------------------------------------------------------------------
+    arrival_lookup = {}
+    origins = [origin] + [
+        o for o in event.origins if o is not origin
+    ]
+
+    for rank, org in enumerate(origins):
+        for arr in getattr(org, "arrivals", []) or []:
+            pid = str(arr.pick_id)
+            if pid not in arrival_lookup:
+                arrival_lookup[pid] = {
+                    "phase": (arr.phase or "").strip().upper(),
+                    "time_weight": as_float(arr.time_weight),
+                    "origin_rank": rank,
+                }
+
     out = {}
+    for pick in event.picks:
+        pid = str(pick.resource_id)
+        arr = arrival_lookup.get(pid)
 
-    for arr in origin.arrivals:
-        phase = (arr.phase or "").strip().upper()
-        if not phase.startswith("S"):
+        phase_hint = str(
+            getattr(pick, "phase_hint", "") or ""
+        ).strip().upper()
+        arr_phase = "" if arr is None else arr["phase"]
+
+        is_s = (
+            phase_hint.startswith("S")
+            if phase_hint
+            else arr_phase.startswith("S")
+        )
+        if not is_s:
             continue
 
-        weight = as_float(arr.time_weight)
-        if (not use_zero_weight) and np.isfinite(weight) and weight == 0.0:
+        if (
+            not use_zero_weight
+            and arr is not None
+            and np.isfinite(arr["time_weight"])
+            and arr["time_weight"] == 0.0
+        ):
             continue
 
-        pick = pick_map.get(str(arr.pick_id))
-        if pick is None or pick.waveform_id is None:
+        wid = getattr(pick, "waveform_id", None)
+        if wid is None:
             continue
 
-        wid = pick.waveform_id
         net = (wid.network_code or "").strip()
         sta = (wid.station_code or "").strip()
         loc = normalize_loc(wid.location_code)
         cha = (wid.channel_code or "").strip()
+
         if not sta:
             continue
 
-        key = (net, sta)
-        out.setdefault(key, []).append(
+        out.setdefault((net, sta), []).append(
             {
                 "time": pick.time,
                 "location": loc,
                 "channel": cha,
-                "phase": phase,
-                "weight": weight,
-                "pick_id": str(pick.resource_id),
+                "phase": phase_hint or arr_phase or "S",
+                "weight": (
+                    np.nan
+                    if arr is None
+                    else arr["time_weight"]
+                ),
+                "pick_id": pid,
             }
         )
 
     for key in out:
         out[key].sort(key=lambda x: x["time"])
     return out
+
 
 
 def choose_s_pick_for_p(obs, s_lookup):
@@ -1355,6 +1629,7 @@ def prepare_observations(
     confidence_threshold,
     use_zero_weight,
     use_manual_when_present,
+    include_all_event_picks=True,
     use_sp_ratio=True,
     sp_freqmin=1.0,
     sp_freqmax=20.0,
@@ -1373,11 +1648,13 @@ def prepare_observations(
         event,
         origin,
         use_zero_weight=use_zero_weight,
+        include_all_event_picks=include_all_event_picks,
     )
     s_lookup = build_s_pick_lookup(
         event,
         origin,
         use_zero_weight=use_zero_weight,
+        include_all_event_picks=include_all_event_picks,
     )
 
     rows = []
@@ -1396,6 +1673,10 @@ def prepare_observations(
             "qml_takeoff": obs.qml_takeoff,
             "qml_distance_deg": obs.qml_distance_deg,
             "qml_time_weight": obs.qml_time_weight,
+            "zero_weight_arrival": bool(
+                np.isfinite(obs.qml_time_weight)
+                and obs.qml_time_weight == 0.0
+            ),
             "manual_polarity": obs.manual_polarity,
             "accepted_for_eqpolarity": False,
             "geometry_ready": False,
@@ -1586,7 +1867,7 @@ def print_qc_summary(qc):
         pd.Series(False, index=qc.index),
     ).fillna(False).astype(bool)
 
-    print(f"Total P arrivals considered : {len(qc)}")
+    print(f"Total P observations considered: {len(qc)}")
     print(f"Usable EQPolarity windows   : {int(eq_ok.sum())}")
     print(f"Geometry ready for PyHASH   : {int((eq_ok & geo_ok).sum())}")
     print(f"Rejected before classifier  : {int((~eq_ok).sum())}")
@@ -2634,9 +2915,27 @@ def parse_args():
     p.add_argument(
         "--use-zero-weight-arrivals",
         action="store_true",
+        default=True,
         help=(
-            "Also consider preferred-origin arrivals whose QuakeML "
-            "time_weight is zero."
+            "Compatibility flag. Zero-weight origin arrivals are now included "
+            "by default because location weight is not a focal-mechanism QC flag."
+        ),
+    )
+    p.add_argument(
+        "--exclude-zero-weight-arrivals",
+        action="store_true",
+        help=(
+            "V7 compatibility mode: use only preferred-origin arrivals and "
+            "exclude those whose time_weight is zero. With the same remaining "
+            "options, this reproduces the v7 observation-selection behavior."
+        ),
+    )
+    p.add_argument(
+        "--origin-arrivals-only",
+        action="store_true",
+        help=(
+            "Use only origin-linked arrivals, reproducing the old restrictive "
+            "selection. Default is all event-level P/S picks with waveform ids."
         ),
     )
     p.add_argument(
@@ -2747,8 +3046,12 @@ def main():
         station_df=station_df,
         target_sr=args.sampling_rate,
         confidence_threshold=args.min_confidence,
-        use_zero_weight=args.use_zero_weight_arrivals,
+        use_zero_weight=not args.exclude_zero_weight_arrivals,
         use_manual_when_present=args.use_manual_when_present,
+        include_all_event_picks=not (
+            args.origin_arrivals_only
+            or args.exclude_zero_weight_arrivals
+        ),
         use_sp_ratio=not args.no_sp_ratio,
         sp_freqmin=args.sp_freqmin,
         sp_freqmax=args.sp_freqmax,
@@ -2757,8 +3060,15 @@ def main():
         sp_corrections=sp_corrections,
     )
 
+    n_event_picks = sum(
+        1
+        for _p in event.picks
+        if str(getattr(_p, "phase_hint", "") or "").strip().upper().startswith("P")
+        and getattr(_p, "waveform_id", None) is not None
+    )
     print(
-        f"P arrivals after origin-QC : {len(qc)}\n"
+        f"Event-level P picks         : {n_event_picks}\n"
+        f"P observations selected    : {len(qc)}\n"
         f"Usable waveform windows    : "
         f"{qc['accepted_for_eqpolarity'].fillna(False).sum()}"
     )
@@ -2810,6 +3120,16 @@ def main():
             else "disabled"
         )
     )
+    selection_mode = (
+        "v7-compatible preferred-origin, nonzero-weight arrivals"
+        if args.exclude_zero_weight_arrivals
+        else (
+            "preferred-origin arrivals"
+            if args.origin_arrivals_only
+            else "complete event-level P/S picks"
+        )
+    )
+    print(f"Observation selection        : {selection_mode}")
     print(f"Distance policy              : {args.distance_policy}")
     print(
         "Coverage handling            : "
